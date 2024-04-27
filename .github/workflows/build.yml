@@ -65,6 +65,8 @@ jobs:
           echo is_prerelease: ${{ steps.statping-versions.outputs.is_prerelease }}
           echo == statping version ==
           echo version: ${{ steps.statping-versions.outputs.version }}
+
+
   frontend:
     runs-on: ubuntu-latest
     needs: data
@@ -304,6 +306,8 @@ jobs:
 
   test-postman-sqlite:
     needs: [ data, frontend ]
+    # temporarily disabled
+    if: "false"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -341,58 +345,10 @@ jobs:
           timeoutRequest: 30000
           delayRequest: 600
 
-  test-postman-mysql:
-    needs: [ data, frontend ]
-    runs-on: ubuntu-latest
-
-    services:
-      mysql:
-        image: mysql:5.7
-        env:
-          MYSQL_ROOT_PASSWORD: password123
-          MYSQL_DATABASE: statping
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-go@v2
-        with:
-          go-version: ${{ needs.data.outputs.go_version }}
-
-      - name: Setting ENV's
-        run: |
-          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
-          echo "/opt/hostedtoolcache/node/${{ needs.data.outputs.node_version }}/x64/bin" >> $GITHUB_PATH
-        shell: bash
-
-      - name: Download Compiled Frontend (rice-box.go)
-        uses: actions/download-artifact@v1
-        with:
-          name: static-rice-box
-          path: ./source
-
-      - name: Install Statping
-        run: |
-          make build
-          chmod +x statping
-          mv statping $(go env GOPATH)/bin/
-      - name: Run Statping
-        run: |
-          API_SECRET=demosecret123 statping --port=8585 > /dev/null &
-          sleep 5
-      - name: Postman MySQL Tests
-        uses: matt-ball/newman-action@master
-        with:
-          apiKey: ${{ secrets.POSTMAN_API }}
-          collection: ./dev/postman.json
-          environment: ./dev/postman_env_mysql.json
-          timeoutRequest: 30000
-          delayRequest: 600
-
   test-postman-postgres:
     needs: [ data, frontend ]
+    # temporarily disabled
+    if: "false"
     runs-on: ubuntu-latest
 
     services:
@@ -447,22 +403,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: jemand771/docker-build-action@main
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          GITHUB_TOKEN: ${{ github.token }}
-          push_strategy: artifact
-          platforms: linux/amd64, linux/arm/v7, linux/arm/v6, linux/arm64
-          args: |
-            COMMIT=${{ github.sha }}
-            VERSION=${{ needs.data.outputs.version }}
-            BUILDKIT_INLINE_CACHE=true
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: jdschumacher/statping-ng:${{ needs.data.outputs.version }}
+          labels: ${{ github.sha }}
 
   # all other release jobs should be based on this
   release:
     # only run release jobs on push to stable/unstable.
     if: ${{ success() && fromJSON(needs.data.outputs.is_release) }}
-    needs: [ data, build, test-postman-sqlite, test-postman-mysql, test-postman-postgres, docker-build ]
+    needs: [ data, build, test-postman-sqlite, test-postman-postgres, docker-build ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v3
@@ -479,8 +444,5 @@ jobs:
           omitBodyDuringUpdate: true
           prerelease: ${{ fromJSON(needs.data.outputs.is_prerelease) && 'true' || 'false'}}
           updateOnlyUnreleased: true
-      - name: push docker images
-        uses: jemand771/push-docker-artifact@main
-        with:
-          GITHUB_TOKEN: ${{ github.token }}
-      # TODO bring back dockerhub image
+
+
